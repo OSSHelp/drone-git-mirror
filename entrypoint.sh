@@ -13,19 +13,21 @@ function prepare_vars() {
     current_repo_dir=/drone/src
     mirror_ignore_list="${current_repo_dir}/.mirror_ignore"
 
-    test -n "$PLUGIN_TARGET_REPO"        && target_repo="$PLUGIN_TARGET_REPO"
-    test -n "$PLUGIN_GIT_NAME"           && git_name="$PLUGIN_GIT_NAME"
-    test -n "$PLUGIN_GIT_EMAIL"          && git_email="$PLUGIN_GIT_EMAIL"
-    test -n "$PLUGIN_IGNORE_ERRORS"      && ignore_errors="$PLUGIN_IGNORE_ERRORS"
-    test -n "$CI_WORKSPACE"              && current_repo_dir="$CI_WORKSPACE"
-    test -n "$PLUGIN_MIRROR_IGNORE_LIST" && mirror_ignore_list="${current_repo_dir}/$PLUGIN_MIRROR_IGNORE_LIST"
+    test -n "${PLUGIN_TARGET_REPO}"        && target_repo="${PLUGIN_TARGET_REPO}"
+    test -n "${PLUGIN_GIT_NAME}"           && git_name="${PLUGIN_GIT_NAME}"
+    test -n "${PLUGIN_GIT_EMAIL}"          && git_email="${PLUGIN_GIT_EMAIL}"
+    test -n "${PLUGIN_IGNORE_ERRORS}"      && ignore_errors="${PLUGIN_IGNORE_ERRORS}"
+    test -n "${CI_WORKSPACE}"              && current_repo_dir="${CI_WORKSPACE}"
+    test -n "${PLUGIN_MIRROR_IGNORE_LIST}" && mirror_ignore_list="${current_repo_dir}/${PLUGIN_MIRROR_IGNORE_LIST}"
 
     test "${target_repo:-none}" == "none" && \
       show_error "No target repo specified"
     test -f "${mirror_ignore_list}" -a -s "${mirror_ignore_list}" && \
       mirror_mode=partial
-    test -z "$PLUGIN_SSH_KEY" && \
+    test -z "${PLUGIN_SSH_KEY}" -a -z "${PLUGIN_SSH_KEY_FILE}" && \
       show_error "No private key specified"
+    test -n "${PLUGIN_SSH_KEY_FILE}" -a ! -r "${PLUGIN_SSH_KEY_FILE}" && \
+      show_error "Can't read private key from ${PLUGIN_SSH_KEY_FILE}"
 }
 
 function show_notice()  { echo -e "\e[34m[NOTICE. $(date '+%Y/%m/%d-%H:%M:%S')]\e[39m ${1}"; }
@@ -40,10 +42,12 @@ function show_error()   {
 }
 
 function prepare_repo_access() {
+  show_notice "Preparing private key and known_hosts"
   local key_file=~/.ssh/id_rsa
   mkdir -p ~/.ssh
   chmod -R go-rwx ~/.ssh
-  echo "$PLUGIN_SSH_KEY" > "${key_file}"
+  test -n "${PLUGIN_SSH_KEY}" && echo "${PLUGIN_SSH_KEY}" > "${key_file}"
+  test -z "${PLUGIN_SSH_KEY}" && cat "${PLUGIN_SSH_KEY_FILE}" > "${key_file}"
   chown root:root "${key_file}" && \
     chmod 0600 "${key_file}"
   ssh-keyscan -t rsa,dsa,ecdsa "$(sed -r 's/.+@//;s/:.+//' <<< "${target_repo}")" >> ~/.ssh/known_hosts
@@ -51,16 +55,16 @@ function prepare_repo_access() {
 
 function clone_target_repo() {
   local err=1
-  test -d "${tmp_dir}" || \
-    mkdir -p "${tmp_dir}"
-  git clone "${target_repo}" "${tmp_dir}" && \
-    err=0
+  show_notice "Cloning repository from ${target_repo} to ${tmp_dir}"
+  test -d "${tmp_dir}" || mkdir -p "${tmp_dir}"
+  git clone "${target_repo}" "${tmp_dir}" && err=0
   return "${err}"
 }
 
 function sync_changes_from_current_repo() {
+  show_notice "Syncing chages from ${current_repo_dir} to ${tmp_dir}"
   local err=1
-  rsync -av --delete --exclude '.git' --exclude-from="${mirror_ignore_list}" "${current_repo_dir}/" "${tmp_dir}/" && \
+  rsync -icrv --delete --exclude '.git' --exclude-from="${mirror_ignore_list}" "${current_repo_dir}/" "${tmp_dir}/" && \
     err=0
   return "${err}"
 }
@@ -68,38 +72,51 @@ function sync_changes_from_current_repo() {
 function push_changes_to_remote_repo() {
   local err=1
 
+  show_notice "Commit will be made as \"${git_name}\" with ${git_email} as an email"
+
   git config --global user.email "${git_email}"
   git config --global user.name "${git_name}"
 
   test "${mirror_mode}" == "full" && {
+    show_notice "Performing full mirroring"
     git remote add neworigin "${target_repo}" && \
-      git push -u neworigin "HEAD:$DRONE_REPO_BRANCH" --tags --force && \
+      git push -u neworigin "HEAD:${DRONE_REPO_BRANCH}" --tags && \
         err=0
   }
 
   test "${mirror_mode}" == "partial" && {
+    show_notice "Performing partial mirroring"
     clone_target_repo && \
       sync_changes_from_current_repo && {
-        cd "${tmp_dir}" || \
-          show_error "Failed to change directory to ${tmp_dir}"
+        cd "${tmp_dir}" || show_error "Failed to change directory to ${tmp_dir}"
+        show_notice "Adding files to the index"
         git add .
-        git commit -am "$DRONE_COMMIT_MESSAGE"
-        git push && {
-          cd "${current_repo_dir}" && \
-            git push --tags "${target_repo}" && \
-              err=0
-        }
+        show_notice "Commiting changes"
+        git commit -am "${DRONE_COMMIT_MESSAGE}"
+        show_notice "Here is the latest commit"
+        git log -n 1
+        show_notice "Pushing changes to ${target_repo}"
+        git push && \
+          err=0
       }
   }
   return "${err}"
 }
 
+# clearing out the env
+for target_var in $(env | grep -E '^GIT_.+=' | cut -f 1 -d '='); do
+  unset "${target_var}";
+done
+
+# build woring env
 prepare_vars
 prepare_repo_access
 
+# upload
 push_changes_to_remote_repo && \
   build_failed=0
 
+# results
 test "${build_failed}" != 0 && {
   test "${ignore_errors,,}" == "true" -o "${ignore_errors}" == "1" && {
     echo "Exiting with 0 code, because \"ignore_errors\" param is set to \"${ignore_errors}\""
