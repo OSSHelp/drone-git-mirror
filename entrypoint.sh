@@ -9,7 +9,7 @@ function prepare_vars() {
     git_name='Drone CI'
     mirror_mode=full
     ignore_errors=false
-    tmp_dir=/src/tmp_repo_dir
+    tmp_dir=/tmp/remote
     current_repo_dir=/drone/src
     mirror_ignore_list="${current_repo_dir}/.mirror_ignore"
 
