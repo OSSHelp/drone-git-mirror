@@ -1,8 +1,6 @@
 # git-mirror
 
-| master | devel |
-| -------- | -------- |
-| [![Build Status](https://drone.osshelp.ru/api/badges/drone/drone-git-mirror/status.svg?ref=refs/heads/master)](https://drone.osshelp.ru/drone/drone-git-mirror) | [![Build Status](https://drone.osshelp.ru/api/badges/drone/drone-git-mirror/status.svg?ref=refs/heads/devel)](https://drone.osshelp.ru/drone/drone-git-mirror) |
+[![Build Status](https://drone.osshelp.ru/api/badges/drone/drone-git-mirror/status.svg)](https://drone.osshelp.ru/drone/drone-git-mirror)
 
 ## About
 
@@ -10,7 +8,31 @@ The image is used for mirroring our repos to external ones.
 
 ## Usage example
 
+### Partial mirror (rsync)
+
+Performs if `mirror_ignore_list` file exists.
+
 ``` yaml
+steps:
+  - name: mirror
+    image: osshelp/drone-git-mirror
+    settings:
+      target_repo: git@github.com:OSSHelp/some-repo.git
+      ssh_key:
+        from_secret: git-mirror-private-key
+```
+
+### Full mirror
+
+Performs if `mirror_ignore_list` file doesn't exists and the clone step is disabled.
+
+``` yaml
+trigger:
+  event: [push, tag]
+
+clone:
+  disable: true
+
 steps:
   - name: mirror
     image: osshelp/drone-git-mirror

@@ -42,6 +42,14 @@ function show_error()   {
 }
 
 function prepare_repo_access() {
+  test "${mirror_mode}" == "full" && {
+    show_notice "Preparing ~/.netrc file"
+    echo "machine $DRONE_NETRC_MACHINE" > ~/.netrc
+    echo "login $DRONE_NETRC_USERNAME" >> ~/.netrc
+    echo "password $DRONE_NETRC_PASSWORD" >> ~/.netrc
+    chmod 600 ~/.netrc
+  }
+
   show_notice "Preparing private key and known_hosts"
   local key_file=~/.ssh/id_rsa
   mkdir -p ~/.ssh
@@ -69,21 +77,16 @@ function sync_changes_from_current_repo() {
   return "${err}"
 }
 
-function prepare_mirror() {
+function prepare_bare_repo() {
   local err=1
   show_notice "Prepare a bare repository from ${DRONE_REMOTE_URL}"
-  test -d "${tmp_dir}" || mkdir -p "${tmp_dir}"
-  cd "${tmp_dir}" || show_error "Failed to change directory to ${tmp_dir}"
-  show_notice "Initializing bare repo"
-  git init --bare .
-  show_notice "Adding remote origin"
-  git config remote.origin.url "${DRONE_REMOTE_URL}"
-  show_notice "Configuring origin"
-  git config --add remote.origin.fetch '+refs/heads/*:refs/heads/*'
-  git config --add remote.origin.fetch '+refs/tags/*:refs/tags/*'
-  git config remote.origin.mirror true
-  show_notice "Fetching files from origin"
-  git fetch --all && err=0
+  git init --bare . \
+  && git config remote.origin.url "${DRONE_REMOTE_URL}" \
+  && git config --add remote.origin.fetch '+refs/heads/*:refs/heads/*' \
+  && git config --add remote.origin.fetch '+refs/tags/*:refs/tags/*' \
+  && git config remote.origin.mirror true \
+  && git fetch --all \
+  && err=0
   return "${err}"
 }
 
@@ -96,10 +99,10 @@ function push_changes_to_remote_repo() {
   git config --global user.name "${git_name}"
 
   test "${mirror_mode}" == "full" && {
-    show_notice "Performing full mirroring"
-    prepare_mirror
-    show_notice "Mirroring to ${target_repo}"
-    git remote add neworigin "${target_repo}" \
+    test ! -d .git || show_error "You have to disable clone step for perform full mirroring. See the plugin docs"
+    prepare_bare_repo \
+    && git remote add neworigin "${target_repo}" \
+    && show_notice "Performing full mirroring to ${target_repo}" \
     && git push neworigin --mirror \
     && err=0
   }
