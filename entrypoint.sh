@@ -69,6 +69,24 @@ function sync_changes_from_current_repo() {
   return "${err}"
 }
 
+function prepare_mirror() {
+  local err=1
+  show_notice "Prepare a bare repository from ${DRONE_REMOTE_URL}"
+  test -d "${tmp_dir}" || mkdir -p "${tmp_dir}"
+  cd "${tmp_dir}" || show_error "Failed to change directory to ${tmp_dir}"
+  show_notice "Initializing bare repo"
+  git init --bare .
+  show_notice "Adding remote origin"
+  git config remote.origin.url "${DRONE_REMOTE_URL}"
+  show_notice "Configuring origin"
+  git config --add remote.origin.fetch '+refs/heads/*:refs/heads/*'
+  git config --add remote.origin.fetch '+refs/tags/*:refs/tags/*'
+  git config remote.origin.mirror true
+  show_notice "Fetching files from origin"
+  git fetch --all && err=0
+  return "${err}"
+}
+
 function push_changes_to_remote_repo() {
   local err=1
 
@@ -79,9 +97,11 @@ function push_changes_to_remote_repo() {
 
   test "${mirror_mode}" == "full" && {
     show_notice "Performing full mirroring"
-    git remote add neworigin "${target_repo}" && \
-      git push -u neworigin "HEAD:${DRONE_REPO_BRANCH}" --tags && \
-        err=0
+    prepare_mirror
+    show_notice "Mirroring to ${target_repo}"
+    git remote add neworigin "${target_repo}" \
+    && git push neworigin --mirror \
+    && err=0
   }
 
   test "${mirror_mode}" == "partial" && {
@@ -108,7 +128,7 @@ for target_var in $(env | grep -E '^GIT_.+=' | cut -f 1 -d '='); do
   unset "${target_var}";
 done
 
-# build woring env
+# build working env
 prepare_vars
 prepare_repo_access
 
